@@ -1,7 +1,6 @@
 // PluginProcessor.cpp
 
 #include "PluginProcessor.h"
-#include "PluginEditor.h"
 
 //==============================================================================
 GuitarGuyAudioProcessor::GuitarGuyAudioProcessor()
@@ -200,12 +199,12 @@ void GuitarGuyAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 //==============================================================================
 bool GuitarGuyAudioProcessor::hasEditor() const
 {
-    return true;
+    return false;
 }
 
 juce::AudioProcessorEditor* GuitarGuyAudioProcessor::createEditor()
 {
-    return new GuitarGuyAudioProcessorEditor (*this);
+    return nullptr;
 }
 
 void GuitarGuyAudioProcessor::getStateInformation (juce::MemoryBlock& destData)

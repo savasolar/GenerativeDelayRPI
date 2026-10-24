@@ -1,55 +1,21 @@
-# Symbolic link for debug version:
-# mklink /D "C:\Program Files\Common Files\VST3\GuitarGuy.vst3" "C:\Users\savas\Documents\JUCE Projects\GuitarGuy\cmake_build\GuitarGuy_artefacts\Debug\VST3\GuitarGuy.vst3"
-
-# visual studio project preferences:
-
-# command: C:\Program Files (x86)\Image-Line\FL Studio 12\FL64.exe
-
-
 cmake_minimum_required(VERSION 3.15)
-
-if(APPLE)
-    set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "Build architectures for macOS")
-endif()
 
 project(GuitarGuy VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# JUCE path
-if(APPLE)
-    set(JUCE_PATH "/Users/admin/Documents/repos/JUCE")
-elseif(NOT APPLE)
-    set(JUCE_PATH "C:/Program Files/JUCE")
-endif()
-
-# Include JUCE
+# JUCE lives at ~/JUCE
+set(JUCE_PATH "$ENV{HOME}/JUCE" CACHE PATH "Path to JUCE")
 add_subdirectory(${JUCE_PATH} JUCE)
-
-# Conditional formats
-if(APPLE)
-    set(PLUGIN_FORMATS AU VST3)
-elseif(NOT APPLE)
-    set(PLUGIN_FORMATS VST3)
-endif()
-
-if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDebug")
-    add_compile_options(
-        $<$<CONFIG:Debug>:/MTd>
-        $<$<CONFIG:Release>:/MT>
-    )
-endif()
 
 set(PLUGIN_CODE "GuiG")
 set(PLUGIN_PRODUCT_NAME "GuitarGuy")
 set(PLUGIN_BUNDLE_ID "com.MixedSignalsAudio.GuitarGuy")
 
-# Plugin setup arguments (common)
-set(PLUGIN_ARGS
+juce_add_plugin(GuitarGuy
     PLUGIN_MANUFACTURER_CODE "Manu"
     PLUGIN_CODE "${PLUGIN_CODE}"
-    FORMATS ${PLUGIN_FORMATS}
+    FORMATS VST3
     PRODUCT_NAME "${PLUGIN_PRODUCT_NAME}"
     COMPANY_NAME "Mixed Signals Audio"
     BUNDLE_ID "${PLUGIN_BUNDLE_ID}"
@@ -62,13 +28,10 @@ set(PLUGIN_ARGS
     MIDI_OUTPUT_NAME "MIDI Output"
 )
 
-# Plugin setup
-juce_add_plugin(GuitarGuy ${PLUGIN_ARGS})
-
 target_compile_definitions(GuitarGuy
     PRIVATE
         JUCE_DISABLE_VST2_BUILDING=1
-        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_VST3=0
         JUCE_PLUGINHOST_VST=0
     PUBLIC
         JUCE_WEB_BROWSER=0
@@ -77,10 +40,7 @@ target_compile_definitions(GuitarGuy
         JUCE_STRICT_REFCOUNTEDPOINTER=1
 )
 
-# Source files
 target_sources(GuitarGuy PRIVATE
-    Source/PluginEditor.cpp
-    Source/PluginEditor.h
     Source/PluginProcessor.cpp
     Source/PluginProcessor.h
     Source/ADSRData.cpp
@@ -91,18 +51,11 @@ target_sources(GuitarGuy PRIVATE
     Source/dr_wav.h
 )
 
-# Binary data
-file(GLOB_RECURSE ALL_WAV_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Audio/*.wav")
-file(GLOB_RECURSE ALL_PNG_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Photo/*.png")
+file(GLOB_RECURSE ALL_WAV_FILES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Audio/*.wav")
 
-juce_add_binary_data(BinaryResources SOURCES
-    ${ALL_WAV_FILES}
-    ${ALL_PNG_FILES}
-)
+juce_add_binary_data(BinaryResources SOURCES ${ALL_WAV_FILES})
 
-# Additional Libraries
-
-# Link everything
 target_link_libraries(GuitarGuy PRIVATE
     BinaryResources
     juce::juce_audio_basics
