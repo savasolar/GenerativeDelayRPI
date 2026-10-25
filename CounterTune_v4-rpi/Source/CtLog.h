@@ -11,4 +11,5 @@ inline void ctLog (const juce::String& s)
     std::fflush (stderr);
 }
 
-#define CT_LOG(msg) ctLog (juce::String() << msg)
+// Named String required: juce::String() is a temporary and operator<< needs a non-const lvalue.
+#define CT_LOG(msg) do { juce::String _ctLogMsg; _ctLogMsg << msg; ctLog (_ctLogMsg); } while (0)

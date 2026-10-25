@@ -186,7 +186,7 @@ PPDAudioProcessor::PPDAudioProcessor()
 
     CT_LOG ("CounterTune starting (Release-safe logging on)");
     pdct.connectOutput(&pdctListener);
-    juce::addDefaultFormatsToManager(pluginFormatManager);
+    pluginFormatManager.addDefaultFormats();
     loadDefaultPlugin();
 }
 
