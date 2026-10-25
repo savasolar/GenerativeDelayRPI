@@ -1,9 +1,10 @@
 ﻿#include "PluginProcessor.h"
-#include "PluginEditor.h"
+#include "CtLog.h"
 #include <array>
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <cstdlib>
 
 namespace
 {
@@ -178,6 +179,12 @@ PPDAudioProcessor::PPDAudioProcessor()
     apvts(*this, nullptr, "Parameters", createParams())
 #endif
 {
+    if (juce::Logger::getCurrentLogger() == nullptr)
+        juce::Logger::setCurrentLogger (
+            juce::FileLogger::createDefaultAppLogger (
+                "MixedSignals", "CounterTune.log", "CounterTune"));
+
+    CT_LOG ("CounterTune starting (Release-safe logging on)");
     pdct.connectOutput(&pdctListener);
     juce::addDefaultFormatsToManager(pluginFormatManager);
     loadDefaultPlugin();
@@ -590,7 +597,7 @@ void PPDAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
 
             // DBG: NOTE ON: chosenNote   | VELOCITY: velocity
-	        DBG("NOTE ON: " + juce::String(chosenNote) + "   | VELOCITY: " + juce::String((juce::uint8)velocity));
+	        CT_LOG ("NOTE ON: " << chosenNote << "   | VELOCITY: " << (int) (juce::uint8) velocity);
 
             notesStartedThisBlock.insert(chosenNote);
             {
@@ -712,12 +719,12 @@ void PPDAudioProcessor::applyDemoFade(juce::AudioBuffer<float>& buffer)
 
 bool PPDAudioProcessor::hasEditor() const
 {
-    return true;
+    return false;
 }
 
 juce::AudioProcessorEditor* PPDAudioProcessor::createEditor()
 {
-    return new PPDAudioProcessorEditor (*this);
+    return nullptr;
 }
 
 void PPDAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
@@ -957,12 +964,17 @@ void PPDAudioProcessor::setNewPlugin(const juce::PluginDescription& pd, const ju
         {
             if (error.isNotEmpty())
             {
-                DBG("Failed to load hosted plugin: " + error);
+                CT_LOG ("Failed to load hosted plugin: " << error);
                 return;
             }
 
             const juce::ScopedLock sl2(innerMutex);
             innerPlugin = std::move(instance);
+
+            if (innerPlugin != nullptr)
+                CT_LOG ("Hosted plugin loaded: " << innerPlugin->getName());
+            else
+                CT_LOG ("Hosted plugin instance was null after createPluginInstanceAsync");
 
             if (!mb.isEmpty() && innerPlugin != nullptr)
                 innerPlugin->setStateInformation(mb.getData(), (int)mb.getSize());
@@ -994,14 +1006,6 @@ juce::String PPDAudioProcessor::getLoadedPluginName() const
     return innerPlugin != nullptr ? innerPlugin->getName() : juce::String("empty");
 }
 
-std::unique_ptr<juce::AudioProcessorEditor> PPDAudioProcessor::createInnerEditor() const
-{
-    const juce::ScopedLock sl(innerMutex);
-    if (innerPlugin != nullptr && innerPlugin->hasEditor())
-        return std::unique_ptr<juce::AudioProcessorEditor>(innerPlugin->createEditorIfNeeded());
-    return nullptr;
-}
-
 void PPDAudioProcessor::clearPlugin()
 {
     const juce::ScopedLock sl(innerMutex);
@@ -1012,19 +1016,44 @@ void PPDAudioProcessor::clearPlugin()
 juce::File PPDAudioProcessor::findDefaultPluginFile() const
 {
     const juce::StringArray candidateNames { "GuitarGuy.vst3", "GuitarGuy.component" };
-    juce::File dir = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getParentDirectory();
 
-    // Walk up from the raw binary (.../Contents/x86_64-win/ on VST3, .../Contents/MacOS/ on AU) so a
-    // sibling GuitarGuy.vst3 or GuitarGuy.component next to PPD2.vst3 still resolves.
+    if (const char* env = std::getenv ("COUNTERTUNE_PLUGIN"))
+    {
+        const juce::File fromEnv (env);
+        if (fromEnv.exists())
+        {
+            CT_LOG ("Using COUNTERTUNE_PLUGIN=" << fromEnv.getFullPathName());
+            return fromEnv;
+        }
+        CT_LOG ("COUNTERTUNE_PLUGIN set but missing: " << env);
+    }
+
+    juce::File dir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
+
+    // Walk up from the raw binary so a sibling GuitarGuy.vst3 next to the Standalone still resolves.
     for (int i = 0; i < 6; ++i)
     {
-		for (const auto& name : candidateNames)
-		{
-			const juce::File candidate = dir.getChildFile(name);
-			if (candidate.exists())
-				return candidate;
-		}
-		dir = dir.getParentDirectory();
+        for (const auto& name : candidateNames)
+        {
+            const juce::File candidate = dir.getChildFile (name);
+            if (candidate.exists())
+            {
+                CT_LOG ("Found hosted plugin: " << candidate.getFullPathName());
+                return candidate;
+            }
+        }
+        dir = dir.getParentDirectory();
+    }
+
+    const juce::File home = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+    for (const auto& name : candidateNames)
+    {
+        const juce::File candidate = home.getChildFile (name);
+        if (candidate.exists())
+        {
+            CT_LOG ("Found hosted plugin in home: " << candidate.getFullPathName());
+            return candidate;
+        }
     }
 
     return {};
@@ -1035,7 +1064,7 @@ void PPDAudioProcessor::loadDefaultPlugin()
     const juce::File pluginFile = findDefaultPluginFile();
     if (!pluginFile.exists())
     {
-        DBG("GuitarGuy.vst3 not found next to the PPD2 executable (or its parent bundle folders).");
+        CT_LOG ("GuitarGuy.vst3 not found (sibling walk, $HOME, COUNTERTUNE_PLUGIN).");
         return;
     }
 

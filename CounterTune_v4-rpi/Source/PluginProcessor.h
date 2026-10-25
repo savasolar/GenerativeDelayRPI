@@ -70,7 +70,6 @@ public:
     void setNewPlugin(const juce::PluginDescription& pd, const juce::MemoryBlock& mb = {});
     bool isPluginLoaded() const;
     juce::String getLoadedPluginName() const;
-    std::unique_ptr<juce::AudioProcessorEditor> createInnerEditor() const;
     void clearPlugin();
     void loadDefaultPlugin();
 
