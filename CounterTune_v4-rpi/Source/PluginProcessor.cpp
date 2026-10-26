@@ -398,11 +398,23 @@ void PPDAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     juce::AudioBuffer<float> monoBlock(1, numSamples);
     monoBlock.clear();
 
-    const int numChannels = juce::jmin(getTotalNumInputChannels(), buffer.getNumChannels());
-    for (int ch = 0; ch < numChannels; ++ch)
-	monoBlock.addFrom(0, 0, buffer, ch, 0, numSamples);
 
-    if (numChannels > 0) monoBlock.applyGain(1.0f / numChannels);
+
+
+
+//    const int numChannels = juce::jmin(getTotalNumInputChannels(), buffer.getNumChannels());
+//    for (int ch = 0; ch < numChannels; ++ch)
+//	monoBlock.addFrom(0, 0, buffer, ch, 0, numSamples);
+
+//    if (numChannels > 0) monoBlock.applyGain(1.0f / numChannels);
+
+    // RPI's input audio is already mono, so averaging it against an empty second channel only quiets it
+    if (buffer.getNumChannels() > 0)
+        monoBlock.copyFrom(0, 0, buffer, 0, 0, numSamples);
+
+
+
+
 
     // ... mono block noise gate ...
     if (monoBlock.getRMSLevel(0, 0, numSamples) < 0.01f)
