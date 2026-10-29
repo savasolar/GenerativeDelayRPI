@@ -8,6 +8,8 @@
 #include <set>
 #include <vector>
 #include <map>
+#include <atomic>
+#include "PedalboardControls.h"
 
 class PPDAudioProcessor  : public juce::AudioProcessor
 {
@@ -43,26 +45,24 @@ public:
     std::vector<int> getSoundingNotes() const;
 
 
-    float getChaosFloat() const { return *apvts.getRawParameterValue("Chaos"); }
-    void setChaosFloat(float newChaosFloat) { auto* param = apvts.getParameter("Chaos"); auto range = param->getNormalisableRange(); param->setValueNotifyingHost(range.convertTo0to1(newChaosFloat)); }
+    // Pot-driven params (atomics). Same names processBlock / syncPpd already call.
+    float getChaosFloat() const { return chaosAtomic.load(std::memory_order_relaxed); }
+    void setChaosFloat(float v) { chaosAtomic.store(juce::jlimit(0.0f, 1.0f, v), std::memory_order_relaxed); }
 
-    float getBloomFloat() const { return *apvts.getRawParameterValue("Bloom"); }
-    void setBloomFloat(float newBloomFloat) { auto* param = apvts.getParameter("Bloom"); auto range = param->getNormalisableRange(); param->setValueNotifyingHost(range.convertTo0to1(newBloomFloat)); }
+    float getBloomFloat() const { return bloomAtomic.load(std::memory_order_relaxed); }
+    void setBloomFloat(float v) { bloomAtomic.store(juce::jlimit(0.0f, 1.0f, v), std::memory_order_relaxed); }
 
-   
-    int getTimeMsInt() const { return *apvts.getRawParameterValue("TimeMs"); }
-    void setTimeMsInt(int newTimeMsInt) { auto* param = apvts.getParameter("TimeMs"); auto range = param->getNormalisableRange(); param->setValueNotifyingHost(range.convertTo0to1(newTimeMsInt)); }
+    int getTimeMsInt() const { return timeMsAtomic.load(std::memory_order_relaxed); }
+    void setTimeMsInt(int v) { timeMsAtomic.store(juce::jlimit(80, 800, v), std::memory_order_relaxed); }
 
-    
+    float getStereoFloat() const { return stereoAtomic.load(std::memory_order_relaxed); }
+    void setStereoFloat(float v) { stereoAtomic.store(juce::jlimit(0.0f, 1.0f, v), std::memory_order_relaxed); }
 
-    float getStereoFloat() const { return *apvts.getRawParameterValue("Stereo"); }
-    void setStereoFloat(float newStereoFloat) { auto* param = apvts.getParameter("Stereo"); auto range = param->getNormalisableRange(); param->setValueNotifyingHost(range.convertTo0to1(newStereoFloat)); }
+    float getMixFloat() const { return mixAtomic.load(std::memory_order_relaxed); }
+    void setMixFloat(float v) { mixAtomic.store(juce::jlimit(0.0f, 1.0f, v), std::memory_order_relaxed); }
 
-    
-    float getMixFloat() const { return *apvts.getRawParameterValue("Mix"); }
-    void setMixFloat(float newMixFloat) { auto* param = apvts.getParameter("Mix"); auto range = param->getNormalisableRange(); param->setValueNotifyingHost(range.convertTo0to1(newMixFloat)); }
-
-    juce::AudioProcessorValueTreeState apvts;
+    bool isEffectEnabled() const { return effectEnabled.load(std::memory_order_relaxed); }
+    void setEffectEnabled(bool on) { effectEnabled.store(on, std::memory_order_relaxed); }
 
     // internal plugin hosting
     juce::AudioPluginFormatManager pluginFormatManager;
@@ -161,7 +161,7 @@ private:
 
 
 
-    juce::AudioProcessorValueTreeState::ParameterLayout createParams();
+    // APVTS removed — pots + atomics own Chaos/Bloom/TimeMs/Mix/Stereo.
 
 
 
@@ -206,6 +206,15 @@ private:
     std::unique_ptr<juce::AudioPluginInstance> innerPlugin;
 
     juce::File findDefaultPluginFile() const;
+
+    std::atomic<float> chaosAtomic { 0.0f };
+    std::atomic<float> bloomAtomic { 0.0f };
+    std::atomic<int>   timeMsAtomic { 200 };
+    std::atomic<float> stereoAtomic { 0.0f }; // fixed unused — always 0
+    std::atomic<float> mixAtomic { 0.5f };
+    std::atomic<bool>  effectEnabled { false }; // start bypassed
+
+    PedalboardControls pedalboardControls;
 
 
 

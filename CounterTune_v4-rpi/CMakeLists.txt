@@ -54,6 +54,8 @@ target_compile_definitions(CounterTune_v4
 target_sources(CounterTune_v4 PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginProcessor.h
+    Source/PedalboardControls.cpp
+    Source/PedalboardControls.h
     Source/CtLog.h
     Source/dywapitchtrack.h
     Source/dywapitchtrack.c
