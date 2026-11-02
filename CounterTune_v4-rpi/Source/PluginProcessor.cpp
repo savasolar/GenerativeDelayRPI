@@ -562,12 +562,27 @@ void PPDAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
             const double normalized = juce::jlimit(0.0, 1.0, (rmsDb - minDb) / (maxDb - minDb));
             const int velocity = juce::jlimit(1, 127, (int)std::lround(normalized * 127.0));
 
-            int chosenNote = -1;
-            {
-                const juce::ScopedLock sl(detectedNotesLock);
-                if (!availableNotes.empty())
-                    chosenNote = availableNotes[(size_t)noteRandom.nextInt((int)availableNotes.size())];
-            }
+//            int chosenNote = -1;
+//            {
+//                const juce::ScopedLock sl(detectedNotesLock);
+//                if (!availableNotes.empty())
+//                    chosenNote = availableNotes[(size_t)noteRandom.nextInt((int)availableNotes.size())];
+//            }
+	
+
+	
+			int chosenNote = -1;
+			{
+				const juce::ScopedLock sl(detectedNotesLock);
+				const bool forceZeroChaos = noteRandom.nextFloat() < 0.4f;  // 40% chance of zero chaos
+				if (forceZeroChaos && !detectedNotes.empty())
+					chosenNote = detectedNotes[(size_t)noteRandom.nextInt((int)detectedNotes.size())];
+				else if (!availableNotes.empty())
+					chosenNote = availableNotes[(size_t)noteRandom.nextInt((int)availableNotes.size())];
+			}
+	
+	
+			
 
             if (chosenNote < 0 || chosenNote > 127)
                 chosenNote = frequencyToMidiNote((float)mpPitch);
