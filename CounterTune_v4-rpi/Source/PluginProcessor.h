@@ -213,6 +213,7 @@ private:
     std::atomic<float> stereoAtomic { 0.0f }; // fixed unused — always 0
     std::atomic<float> mixAtomic { 0.5f };
     std::atomic<bool>  effectEnabled { false }; // start bypassed
+    juce::AudioBuffer<float> bypassScratch; // synth renders here (unheard) while the footswitch is OFF
 
     PedalboardControls pedalboardControls;
 

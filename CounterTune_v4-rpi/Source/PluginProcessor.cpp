@@ -318,6 +318,9 @@ void PPDAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 //    demoSeconds = 0.0;
 #endif
 
+    bypassScratch.setSize(juce::jmax(1, getTotalNumOutputChannels()), juce::jmax(1, samplesPerBlock));
+    bypassScratch.clear();
+
     active = true;
     {
         const juce::ScopedLock sl(innerMutex);
@@ -389,14 +392,6 @@ bool PPDAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 void PPDAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
-
-    // Bypass: dry copy through, no pitch detect / no hosted synth.
-    if (! effectEnabled.load(std::memory_order_relaxed))
-    {
-        midiMessages.clear();
-        // buffer already holds input; leave it (true bypass).
-        return;
-    }
 
     const int numSamples = buffer.getNumSamples();
 
@@ -498,6 +493,42 @@ void PPDAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     {
         const juce::ScopedLock sl(detectedNotesLock);
         tickPpd();
+    }
+
+    // FOOTSWITCH OFF
+    // Listening above (mono + poly pitch detection) always runs, so the
+    // detected notes are current the moment the switch comes back on.
+    // Here, while OFF: generate no echoes, end the ones already sounding,
+    // and let the synth finish them into a scratch buffer nobody hears.
+    // Nothing is left frozen, so ON never resumes old echoes.
+    if (! effectEnabled.load(std::memory_order_relaxed))
+    {
+        midiMessages.clear();
+        {
+            const juce::ScopedLock sl(detectedNotesLock);
+            for (const auto& sn : soundingNotes)
+                if (sn.note >= 0 && sn.note <= 127)
+                    midiMessages.addEvent(juce::MidiMessage::noteOff(1, sn.note), 0);
+            soundingNotes.clear();
+        }
+        msElapsed = 0.0;
+        velSumSq = 0.0;
+        velSamples = 0;
+        stereoLeftNext = true;
+
+        {
+            const juce::ScopedLock sl(innerMutex);
+            if (innerPlugin != nullptr)
+            {
+                juce::AudioBuffer<float> scratch(bypassScratch.getArrayOfWritePointers(),
+                                                 bypassScratch.getNumChannels(),
+                                                 juce::jmin(numSamples, bypassScratch.getNumSamples()));
+                scratch.clear();
+                innerPlugin->processBlock(scratch, midiMessages);
+            }
+        }
+        midiMessages.clear();
+        return; // buffer still holds the untouched dry input (true bypass)
     }
 
     // Every getTimeMsInt() milliseconds, DBG print ("test" + juce::String(testN)) and increment testN
