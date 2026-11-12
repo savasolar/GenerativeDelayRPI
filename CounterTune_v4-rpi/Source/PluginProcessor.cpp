@@ -495,6 +495,12 @@ void PPDAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         tickPpd();
     }
 
+    // The mono "just heard a note" hold counts down in real time, ON or OFF,
+    // so a note played while OFF doesn't still count as "being played" at ON.
+    const double blockMs = (numSamples / currentSampleRate) * 1000.0;
+    if (monoHoldRemainingMs > 0.0)
+        monoHoldRemainingMs = juce::jmax(0.0, monoHoldRemainingMs - blockMs);
+
     // FOOTSWITCH OFF
     // Listening above (mono + poly pitch detection) always runs, so the
     // detected notes are current the moment the switch comes back on.
@@ -515,6 +521,7 @@ void PPDAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         velSumSq = 0.0;
         velSamples = 0;
         stereoLeftNext = true;
+        triggerCycle = false; // no echo cycle runs while OFF
 
         {
             const juce::ScopedLock sl(innerMutex);
@@ -544,13 +551,14 @@ void PPDAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
     {
         const juce::ScopedLock sl(detectedNotesLock);
-        triggerCycle = !detectedNotes.empty() || !availableNotes.empty()
-                    || mpPitch > 0.0 || monoHoldRemainingMs > 0.0;
+        // A note being played starts (or keeps) the echo cycle. The 3 s note
+        // memory only keeps an already-running cycle going (the echo trail);
+        // it never starts one. So at switch-ON, only a note being played
+        // makes echoes, and the memory still shapes which notes they use.
+        const bool notePlaying = !activeNotes.empty() || mpPitch > 0.0 || monoHoldRemainingMs > 0.0;
+        const bool remembered  = !detectedNotes.empty() || !availableNotes.empty();
+        triggerCycle = notePlaying || (triggerCycle && remembered);
     }
-
-    const double blockMs = (numSamples / currentSampleRate) * 1000.0;
-    if (monoHoldRemainingMs > 0.0)
-        monoHoldRemainingMs = juce::jmax(0.0, monoHoldRemainingMs - blockMs);
 
     struct PendingOff { int note; int offset; };
     std::vector<PendingOff> pendingOffs;
