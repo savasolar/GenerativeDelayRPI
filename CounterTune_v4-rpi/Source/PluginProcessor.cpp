@@ -6,6 +6,14 @@
 #include <numeric>
 #include <cstdlib>
 
+#if JucePlugin_Build_Standalone
+ #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+#endif
+#if JUCE_LINUX
+ #include <pthread.h>
+ #include <sched.h>
+#endif
+
 namespace
 {
     constexpr const char* NOTE_NAMES[12] = {
@@ -202,6 +210,39 @@ PPDAudioProcessor::PPDAudioProcessor()
     cb.setEffectEnabled = [](void* u, bool on) { static_cast<PPDAudioProcessor*>(u)->setEffectEnabled(on); };
     cb.isEffectEnabled = [](void* u) { return static_cast<PPDAudioProcessor*>(u)->isEffectEnabled(); };
     pedalboardControls.start(cb);
+
+   #if JucePlugin_Build_Standalone
+    // LATENCY: JUCE opens ALSA with 512-sample blocks unless told otherwise.
+    // Once the standalone has opened the sound card, ask for smaller blocks
+    // (COUNTERTUNE_BUFFER, default 128). If the card refuses, go back to what worked.
+    juce::MessageManager::callAsync ([]
+    {
+        auto* holder = juce::StandalonePluginHolder::getInstance();
+        if (holder == nullptr)
+            return;
+
+        auto& dm = holder->deviceManager;
+        const auto previous = dm.getAudioDeviceSetup();
+        const int wanted = juce::SystemStats::getEnvironmentVariable ("COUNTERTUNE_BUFFER", "128").getIntValue();
+
+        if (wanted > 0 && previous.bufferSize != wanted)
+        {
+            auto setup = previous;
+            setup.bufferSize = wanted;
+            const auto error = dm.setAudioDeviceSetup (setup, true);
+            if (error.isNotEmpty())
+            {
+                CT_LOG ("Audio: " << wanted << "-sample buffer refused (" << error << "), going back");
+                dm.setAudioDeviceSetup (previous, true);
+            }
+        }
+
+        if (auto* dev = dm.getCurrentAudioDevice())
+            CT_LOG ("Audio: " << dev->getTypeName() << " '" << dev->getName() << "' "
+                    << dev->getCurrentSampleRate() << " Hz, buffer " << dev->getCurrentBufferSizeSamples()
+                    << ", latency in/out " << dev->getInputLatencyInSamples() << "/" << dev->getOutputLatencyInSamples() << " samples");
+    });
+   #endif
 }
 
 PPDAudioProcessor::~PPDAudioProcessor()
@@ -272,8 +313,16 @@ void PPDAudioProcessor::changeProgramName (int index, const juce::String& newNam
     juce::ignoreUnused(index, newName);
 }
 
-void PPDAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
+void PPDAudioProcessor::prepareToPlay(double sampleRate, int hostBlockSize)
 {
+    // LATENCY: whatever the sound card's block size, everything below still
+    // works in 512-sample blocks (see processBlock).
+    juce::ignoreUnused(hostBlockSize);
+    const int samplesPerBlock = kGridSamples;
+    gridAudio.setSize(juce::jmax(1, getTotalNumInputChannels(), getTotalNumOutputChannels()), kGridSamples);
+    gridAudio.clear();
+    gridPos = 0;
+
     // monophonic pitch detector setup
     dywapitch_inittracking(&mpPitchTracker);
     mpPitchDetectorFillPos = 0;
@@ -393,6 +442,53 @@ void PPDAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 {
     juce::ScopedNoDenormals noDenormals;
 
+   #if JUCE_LINUX
+    // LATENCY: JUCE runs the ALSA audio thread at normal priority, so anything
+    // else on the Pi can delay it. Make this thread real-time once (needs
+    // LimitRTPRIO in countertune.service; harmless no-op if not allowed).
+    static thread_local bool realtimeTried = false;
+    if (! realtimeTried)
+    {
+        realtimeTried = true;
+        sched_param param {};
+        param.sched_priority = 70;
+        pthread_setschedparam (pthread_self(), SCHED_FIFO, &param);
+    }
+   #endif
+
+    // LATENCY: the sound card can now use small blocks, but the pedal still
+    // hears and plays in 512-sample blocks, exactly as before. Each incoming
+    // sample goes into gridAudio and the sample that was there (already
+    // processed) comes out. Every 512 samples, processGrid() runs the original
+    // processing on the full 512. So the sound is the old sound, 512 samples later.
+    const int numSamples = buffer.getNumSamples();
+    const int numCh = juce::jmin(buffer.getNumChannels(), gridAudio.getNumChannels());
+
+    for (int start = 0; start < numSamples; )
+    {
+        const int n = juce::jmin(numSamples - start, kGridSamples - gridPos);
+
+        for (int ch = 0; ch < numCh; ++ch)
+            std::swap_ranges(buffer.getWritePointer(ch, start), buffer.getWritePointer(ch, start) + n,
+                             gridAudio.getWritePointer(ch, gridPos));
+
+        start += n;
+        gridPos += n;
+
+        if (gridPos == kGridSamples)
+        {
+            processGrid(gridAudio, gridMidi);
+            gridPos = 0;
+        }
+    }
+
+    midiMessages.clear();
+}
+
+// The original processBlock, unchanged: always called with 512 samples.
+void PPDAudioProcessor::processGrid(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+{
+
     const int numSamples = buffer.getNumSamples();
 
 
@@ -448,7 +544,7 @@ void PPDAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
     if (mpPitchDetectorFillPos >= mpAnalysisBuffer.getNumSamples())
     {
-	std::vector<double> doubleSamples(1024);
+	std::array<double, 1024> doubleSamples;
 	for (int i = 0; i < 1024; ++i)
             doubleSamples[i] = mpAnalysisBuffer.getSample(0, i);
 
@@ -1024,8 +1120,8 @@ void PPDAudioProcessor::setNewPlugin(const juce::PluginDescription& pd, const ju
 
             if (active && innerPlugin != nullptr)
             {
-                innerPlugin->setRateAndBufferSizeDetails(getSampleRate(), getBlockSize());
-                innerPlugin->prepareToPlay(getSampleRate(), getBlockSize());
+                innerPlugin->setRateAndBufferSizeDetails(getSampleRate(), kGridSamples);
+                innerPlugin->prepareToPlay(getSampleRate(), kGridSamples);
             }
 
             juce::MessageManager::callAsync([this]()
@@ -1034,7 +1130,7 @@ void PPDAudioProcessor::setNewPlugin(const juce::PluginDescription& pd, const ju
                 });
         };
 
-    pluginFormatManager.createPluginInstanceAsync(pd, getSampleRate(), getBlockSize(), callback);
+    pluginFormatManager.createPluginInstanceAsync(pd, getSampleRate(), kGridSamples, callback);
 }
 
 bool PPDAudioProcessor::isPluginLoaded() const

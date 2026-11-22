@@ -117,6 +117,14 @@ private:
         PPDAudioProcessor& owner;
     };
 
+    // LATENCY: the pedal hears and plays in fixed 512-sample blocks, whatever
+    // block size the sound card runs at (see processBlock).
+    static constexpr int kGridSamples = 512;
+    void processGrid(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages);
+    int gridPos = 0;                    // samples into the current 512
+    juce::AudioBuffer<float> gridAudio; // in: this 512's input; out: last 512, processed
+    juce::MidiBuffer gridMidi;          // notes for the hosted synth, one 512 at a time
+
     void noteOn(int note);
     void noteOff(int note);
 
