@@ -213,8 +213,9 @@ PPDAudioProcessor::PPDAudioProcessor()
 
    #if JucePlugin_Build_Standalone
     // LATENCY: JUCE opens ALSA with 512-sample blocks unless told otherwise.
-    // Once the standalone has opened the sound card, ask for smaller blocks
-    // (COUNTERTUNE_BUFFER, default 128). If the card refuses, go back to what worked.
+    // Once the standalone has opened the sound card, demand smaller blocks
+    // (COUNTERTUNE_BUFFER, default 128). No fallback: if the card won't run at
+    // exactly that size, audio is shut off so the failure is impossible to miss.
     juce::MessageManager::callAsync ([]
     {
         auto* holder = juce::StandalonePluginHolder::getInstance();
@@ -222,25 +223,28 @@ PPDAudioProcessor::PPDAudioProcessor()
             return;
 
         auto& dm = holder->deviceManager;
-        const auto previous = dm.getAudioDeviceSetup();
         const int wanted = juce::SystemStats::getEnvironmentVariable ("COUNTERTUNE_BUFFER", "128").getIntValue();
 
-        if (wanted > 0 && previous.bufferSize != wanted)
+        auto setup = dm.getAudioDeviceSetup();
+        setup.bufferSize = wanted;
+        const auto error = wanted > 0 ? dm.setAudioDeviceSetup (setup, true)
+                                      : juce::String ("COUNTERTUNE_BUFFER is not a valid number");
+
+        auto* dev = dm.getCurrentAudioDevice();
+        const int actual = dev != nullptr ? dev->getCurrentBufferSizeSamples() : 0;
+
+        if (error.isNotEmpty() || actual != wanted)
         {
-            auto setup = previous;
-            setup.bufferSize = wanted;
-            const auto error = dm.setAudioDeviceSetup (setup, true);
-            if (error.isNotEmpty())
-            {
-                CT_LOG ("Audio: " << wanted << "-sample buffer refused (" << error << "), going back");
-                dm.setAudioDeviceSetup (previous, true);
-            }
+            CT_LOG ("Audio: FAILED to get " << wanted << "-sample buffer (got " << actual
+                    << (error.isNotEmpty() ? ", error: " + error : juce::String())
+                    << "). Audio shut off.");
+            dm.closeAudioDevice();
+            return;
         }
 
-        if (auto* dev = dm.getCurrentAudioDevice())
-            CT_LOG ("Audio: " << dev->getTypeName() << " '" << dev->getName() << "' "
-                    << dev->getCurrentSampleRate() << " Hz, buffer " << dev->getCurrentBufferSizeSamples()
-                    << ", latency in/out " << dev->getInputLatencyInSamples() << "/" << dev->getOutputLatencyInSamples() << " samples");
+        CT_LOG ("Audio: " << dev->getTypeName() << " '" << dev->getName() << "' "
+                << dev->getCurrentSampleRate() << " Hz, buffer " << actual
+                << ", latency in/out " << dev->getInputLatencyInSamples() << "/" << dev->getOutputLatencyInSamples() << " samples");
     });
    #endif
 }
